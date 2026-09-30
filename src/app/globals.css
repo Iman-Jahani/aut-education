@@ -1,0 +1,165 @@
+@import url("https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --grad: linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #ec4899 120%);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  color: #1e293b;
+  min-height: 100vh;
+  background-color: #f8fafc;
+  background-image:
+    radial-gradient(900px 500px at 105% -10%, rgba(139, 92, 246, 0.13), transparent 60%),
+    radial-gradient(800px 480px at -10% 0%, rgba(99, 102, 241, 0.12), transparent 55%),
+    radial-gradient(rgba(99, 102, 241, 0.09) 1px, transparent 1px);
+  background-size: auto, auto, 22px 22px;
+  background-attachment: fixed;
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.25);
+}
+
+/* Nicer scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 8px;
+}
+
+/* ---------- Animations ---------- */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes popIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translate(-50%, 16px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes floaty {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -8px, 0); }
+}
+.anim-fade { animation: fadeIn 0.18s ease-out both; }
+.anim-pop { animation: popIn 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.1) both; }
+.anim-slide-up { animation: slideUp 0.28s ease-out both; }
+.anim-float { animation: floaty 6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade, .anim-pop, .anim-slide-up, .anim-float { animation: none; }
+}
+
+/* ---------- Reusable components ---------- */
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition
+      active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn text-white shadow-soft hover:shadow-glow hover:-translate-y-px;
+    background-image: var(--grad);
+  }
+  .btn-ghost {
+    @apply btn border border-line bg-white text-ink hover:border-primary/40 hover:text-primary;
+  }
+  .card {
+    @apply bg-white border border-line rounded-2xl shadow-soft;
+  }
+  .glass {
+    @apply bg-white/75 backdrop-blur-xl border-b border-line/80;
+  }
+  .grad-text {
+    background-image: var(--grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+/* ---------- CodeMirror ---------- */
+.cm-editor {
+  overflow: hidden;
+  direction: ltr;
+  text-align: left;
+  font-size: 13.5px;
+  /* Cells are compact by default (100px) but can grow up to 620px.
+     (.cm-editor is the stable selector — theme classes like .ͼ1g are generated.) */
+  min-height: 100px;
+  max-height: 620px;
+}
+
+.cm-editor .cm-scroller {
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+}
+.cm-editor.cm-focused {
+  outline: none;
+}
+
+/* ---------- Skeleton loaders ---------- */
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #e8edf5;
+  border-radius: 10px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: shimmer 1.3s infinite;
+}
+.skeleton-dark {
+  background: rgba(148, 163, 184, 0.15);
+}
+.skeleton-dark::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after { animation: none; }
+}
+
+/* ---------- Insert-between-cells divider ---------- */
+.insert-divider .insert-btn {
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.15s, transform 0.15s;
+}
+.insert-divider:hover .insert-btn,
+.insert-divider:focus-within .insert-btn {
+  opacity: 1;
+  transform: scale(1);
+}
+@media (hover: none) {
+  .insert-divider .insert-btn { opacity: 0.55; transform: none; }
+}
+
+/* ---------- Cell highlight after creation ---------- */
+@keyframes cellFlash {
+  0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55); }
+  100% { box-shadow: 0 0 0 14px rgba(99, 102, 241, 0); }
+}
+.cell-flash { animation: cellFlash 1s ease-out 1; }
