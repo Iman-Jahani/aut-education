@@ -14,9 +14,10 @@
 --
 -- RETURNS
 --   A set of 0 or 1 rows with the same columns as
---   `select * from public.class_sessions` (id, code, title, admin_pin_hash,
---   created_by, teacher_id, created_at), so the helpers in
---   src/lib/classJoin.ts keep working unchanged.
+--   `select * from public.class_sessions` — id, code, title, teacher_id,
+--   admin_pin_hash, created_by, created_at — so the client can use
+--   `data[0].id / .code / .title / .teacher_id` (plus admin_pin_hash for the
+--   class "teacher mode") exactly like it did with the old direct read.
 -- ============================================================================
 
 create or replace function public.join_class_by_code(p_code text)
@@ -55,3 +56,31 @@ grant execute on function public.join_class_by_code(text) to authenticated;
 
 -- Handy check while testing:
 --   select * from public.join_class_by_code('A1B2C3');
+
+-- ---------------------------------------------------------------------------
+-- VERIFY (paste each block in the SQL Editor)
+--   -- 1) does the function exist, and can the app execute it?
+--   select p.proname, pg_get_function_arguments(p.oid) as args, p.prosecdef, p.proacl
+--   from pg_proc p
+--   join pg_namespace n on n.oid = p.pronamespace
+--   where n.nspname = 'public' and p.proname = 'join_class_by_code';
+--
+--   -- 2) does it resolve the code? (must return exactly 1 row)
+--   select id, code, title, teacher_id from public.join_class_by_code('A1B2C3');
+--
+--   -- 3) FORCE RLS would also bind the function owner and defeat
+--   --    SECURITY DEFINER — relforcerowsecurity must be false:
+--   select relrowsecurity, relforcerowsecurity
+--   from pg_class where oid = 'public.class_sessions'::regclass;
+--
+--   -- 4) what can a student read from the table right now?
+--   select polname, pg_get_expr(polqual, polrelid) as using_expr
+--   from pg_policy where polrelid = 'public.class_sessions'::regclass;
+
+-- ---------------------------------------------------------------------------
+-- PLAN B — if you cannot deploy the RPC right now (or while debugging):
+--   give signed-in users read access to the class row again, which is exactly
+--   what the app did before. Uncomment, run once, and students can join again.
+--   drop policy if exists class_sessions_select on public.class_sessions;
+--   create policy class_sessions_select on public.class_sessions
+--     for select to authenticated using (true);

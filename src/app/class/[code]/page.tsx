@@ -17,7 +17,7 @@ import LiveBanner from "@/components/LiveBanner";
 import { CellSkeleton, ClassPageSkeleton } from "@/components/Skeleton";
 import Icon from "@/components/Icon";
 import { useActiveItem } from "@/hooks/useActiveItem";
-import { joinClassByCode } from "@/lib/classJoin";
+import { joinClassByCode, getClassAdminPinHash } from "@/lib/classJoin";
 import { hashPin } from "@/lib/utils";
 import { notebookToRows, cellsToNotebook, notebookFileName } from "@/lib/notebook";
 import type { Cell, ClassSession, Quiz, Competition } from "@/lib/types";
@@ -68,6 +68,8 @@ export default function ClassPage({ params }: { params: { code: string } }) {
 
   const [session, setSession] = useState<ClassSession | null>(null);
   const [notFound, setNotFound] = useState(false);
+  /** Why the code could not be resolved — shown on the not-found card. */
+  const [loadError, setLoadError] = useState("");
   const [cells, setCells] = useState<Cell[]>([]);
   const [loadingCells, setLoadingCells] = useState(true);
   const [authorAvatars, setAuthorAvatars] = useState<Record<string, string>>({});
@@ -96,9 +98,11 @@ export default function ClassPage({ params }: { params: { code: string } }) {
       let cls: ClassSession | null = null;
       try {
         // Resolve (and join) the class through the `join_class_by_code` RPC —
-        // the code lookup happens server-side instead of a direct table read.
+        // the code lookup happens server-side instead of a direct table read,
+        // so RLS on class_sessions no longer blocks students.
         cls = await joinClassByCode(code);
-      } catch {
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : "کلاس با این کد پیدا نشد");
         setNotFound(true);
       }
       if (!cls) return;
@@ -109,7 +113,7 @@ export default function ClassPage({ params }: { params: { code: string } }) {
       // teacher entered the PIN is compared with the class PIN hash.
       try {
         const stored = localStorage.getItem("teacherPin_" + cls.code);
-        if (stored && stored === cls.admin_pin_hash) setTeacherMode(true);
+        if (stored && stored === (await getClassAdminPinHash(cls))) setTeacherMode(true);
       } catch {
         /* localStorage unavailable — teacher just has to re-enter the PIN */
       }
@@ -347,7 +351,7 @@ export default function ClassPage({ params }: { params: { code: string } }) {
   const unlockTeacherMode = async () => {
     if (!session) return;
     const h = await hashPin(pinInput);
-    if (h === session.admin_pin_hash) {
+    if (h === (await getClassAdminPinHash(session))) {
       setTeacherMode(true);
       setPinModalOpen(false);
       setPinInput("");
@@ -391,7 +395,7 @@ export default function ClassPage({ params }: { params: { code: string } }) {
             <Icon name="search" className="w-10 h-10" />
           </div>
           <h1 className="font-extrabold text-lg mb-2">کلاسی با این کد پیدا نشد</h1>
-          <p className="text-sm text-muted mb-5">کد رو دوباره چک کن یا از معلمت بپرس.</p>
+          <p className="text-sm text-muted mb-5">{loadError || "کد رو دوباره چک کن یا از معلمت بپرس."}</p>
           <Link href="/" className="btn-primary">
             بازگشت به صفحه اصلی
           </Link>
