@@ -10,7 +10,10 @@
 --
 -- HOW TO RUN
 --   Supabase Dashboard → SQL Editor → paste this whole file → Run.
---   Idempotent (`create or replace`), so you can re-run it safely.
+--   Idempotent (`create or replace`), so you can re-run it safely — and it
+--   drops a previous version first, because a different RETURN TYPE can only
+--   be changed with DROP (otherwise you get:
+--     ERROR 42P13: cannot change return type of existing function).
 --
 -- RETURNS
 --   A set of 0 or 1 rows with the same columns as
@@ -19,6 +22,35 @@
 --   `data[0].id / .code / .title / .teacher_id` (plus admin_pin_hash for the
 --   class "teacher mode") exactly like it did with the old direct read.
 -- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 0) Drop an existing version whose RETURN TYPE differs.
+--    `create or replace function` can only replace the body, so an older
+--    join_class_by_code() that returned e.g. `table(id, code, title)` makes the
+--    create below fail with:
+--       ERROR 42P13: cannot change return type of existing function
+--    PRINT the old definition first and keep anything useful it did (e.g. an
+--    INSERT that recorded the membership) — reading it is harmless:
+--       select oid::regprocedure from pg_proc where proname = 'join_class_by_code';
+--       select pg_get_functiondef('public.join_class_by_code(text)'::regprocedure);
+--    Then the drop + create here is safe (only the exact (text) signature).
+drop function if exists public.join_class_by_code(text);
+
+--    If the create still says 42P13, the existing function has a DIFFERENT
+--    signature (e.g. join_class_by_code(p_class uuid)). Drop every overload in
+--    the public schema, then re-run this file:
+--      do $$
+--      declare r record;
+--      begin
+--        for r in
+--          select oid::regprocedure::text as sig
+--          from pg_proc
+--          where proname = 'join_class_by_code'
+--            and pronamespace = 'public'::regnamespace
+--        loop
+--          execute format('drop function %s', r.sig);
+--        end loop;
+--      end $$;
 
 create or replace function public.join_class_by_code(p_code text)
 returns setof public.class_sessions
@@ -53,6 +85,11 @@ $$;
 revoke all on function public.join_class_by_code(text) from public;
 revoke all on function public.join_class_by_code(text) from anon;
 grant execute on function public.join_class_by_code(text) to authenticated;
+
+-- PostgREST caches the schema; without this the app may keep answering
+-- PGRST202 ("could not find the function") for a minute or two.
+-- (Dashboard → Settings → API → "Reload schema" does the same.)
+notify pgrst, 'reload schema';
 
 -- Handy check while testing:
 --   select * from public.join_class_by_code('A1B2C3');
