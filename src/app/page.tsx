@@ -7,6 +7,7 @@ import { useToast } from "@/components/ToastProvider";
 import ProfileModal from "@/components/ProfileModal";
 import WelcomeModal from "@/components/WelcomeModal";
 import Icon from "@/components/Icon";
+import { listJoinedClasses, type JoinedClass } from "@/lib/joinedClasses";
 
 export default function LandingPage() {
   const { ready, user, role, needsProfile, displayName, avatar, signOut } = useAuth();
@@ -14,14 +15,18 @@ export default function LandingPage() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [welcomeOpen, setWelcomeOpen] = useState(false);
 
-  useEffect(() => {
-    if (ready && needsProfile) {
-      const t = setTimeout(() => setProfileOpen(true), 400);
-      return () => clearTimeout(t);
-    }
-  }, [ready, needsProfile]);
-
   const isTeacher = role === "teacher";
+
+  // Recent classes come from localStorage, so they are read after mount
+  // (during SSR localStorage does not exist — this avoids a hydration mismatch).
+  const [recents, setRecents] = useState<JoinedClass[]>([]);
+  useEffect(() => {
+    if (user) setRecents(listJoinedClasses().slice(0, 4));
+    else setRecents([]);
+  }, [user]);
+
+  // NOTE: the profile editor is never opened automatically — the user opens it
+  // from the avatar button (which is highlighted while `needsProfile`).
 
   // Logged-in users go straight to "join / create class".
   function openClassPicker() {
@@ -47,21 +52,27 @@ export default function LandingPage() {
           <div className="flex-1" />
           {user ? (
             <>
-              <button
-                onClick={() => setProfileOpen(true)}
-                className="flex items-center gap-2 pl-3 pr-1.5 py-1 bg-white border border-line rounded-full text-sm font-bold text-primary hover:shadow-soft transition"
-              >
-                <span className="w-7 h-7 rounded-full bg-indigo-50 grid place-items-center text-base">{avatar}</span>
-                <span className="hidden sm:inline">{displayName}</span>
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-muted">
-                  {isTeacher ? "معلم" : "دانشجو"}
-                </span>
-              </button>
+              <Link href="/dashboard" className="btn-ghost hidden sm:inline-flex">
+                <Icon name="chart" className="w-4 h-4" /> داشبورد من
+              </Link>
               {isTeacher && (
                 <Link href="/admin" className="btn-ghost hidden sm:inline-flex">
                   پنل مدیریت
                 </Link>
               )}
+              <button
+                onClick={() => setProfileOpen(true)}
+                title={needsProfile ? "نام و آواتارت را تنظیم کن" : "پروفایل"}
+                className={`flex items-center gap-2 pl-3 pr-1.5 py-1 bg-white border rounded-full text-sm font-bold text-primary hover:shadow-soft transition ${
+                  needsProfile ? "border-primary/40 ring-2 ring-primary/25" : "border-line"
+                }`}
+              >
+                <span className="w-7 h-7 rounded-full bg-indigo-50 grid place-items-center text-base">{avatar}</span>
+                <span className="hidden sm:inline">{displayName}</span>
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-muted">
+                  {needsProfile ? "نامت را تنظیم کن" : isTeacher ? "معلم" : "دانشجو"}
+                </span>
+              </button>
               <button onClick={handleSignOut} className="btn-ghost" title="خروج از حساب">
                 <Icon name="logout" className="w-4 h-4" />
               </button>
@@ -104,7 +115,43 @@ export default function LandingPage() {
                       <div className="font-extrabold text-sm truncate">خوش اومدی {displayName}</div>
                       <div className="text-[11px] text-muted">{isTeacher ? "حساب معلم" : "حساب دانشجویی"}</div>
                     </div>
+                    <button
+                      onClick={() => setProfileOpen(true)}
+                      className="mr-auto btn-ghost !px-3 !py-1.5 !text-xs shrink-0"
+                      title="ویرایش نام و آواتار"
+                    >
+                      <Icon name="edit" className="w-3.5 h-3.5" /> ویرایش
+                    </button>
                   </div>
+
+                  {needsProfile && (
+                    <button
+                      onClick={() => setProfileOpen(true)}
+                      className="w-full card p-3 flex items-center gap-2 text-right border-primary/30 hover:shadow-soft transition"
+                    >
+                      <Icon name="sparkles" className="w-4 h-4 text-primary shrink-0" />
+                      <span className="text-xs font-bold">قبل از شروع، اسم و آواتارت را تنظیم کن</span>
+                      <Icon name="arrowLeft" className="w-4 h-4 text-primary mr-auto" />
+                    </button>
+                  )}
+
+                  {recents.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {recents.map((c) => (
+                        <Link
+                          key={c.id}
+                          href={`/class/${c.code}`}
+                          title="ادامه‌ی کلاس"
+                          className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full bg-white border border-line hover:border-primary/40 hover:text-primary transition"
+                        >
+                          <Icon name="school" className="w-3.5 h-3.5" />
+                          <span className="max-w-[140px] truncate">{c.title}</span>
+                          <span className="font-mono tracking-widest text-muted">{c.code}</span>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap gap-3">
                     <button
                       onClick={openClassPicker}
@@ -112,6 +159,9 @@ export default function LandingPage() {
                     >
                       <Icon name="grid" className="w-5 h-5" /> ورود به کلاس
                     </button>
+                    <Link href="/dashboard" className="btn-ghost !px-6 !py-3.5 inline-flex items-center gap-2">
+                      <Icon name="chart" className="w-4 h-4" /> داشبورد من
+                    </Link>
                     {isTeacher && (
                       <Link href="/admin" className="btn-ghost !px-6 !py-3.5 inline-flex items-center gap-2">
                         <Icon name="settings" className="w-4 h-4" /> پنل مدیریت
@@ -207,6 +257,8 @@ print(greet("world"))
             { icon: "file", title: "تمرین با تست خودکار", desc: "معلم تست‌کیس تعریف می‌کنه و پاسخ دانشجو همون لحظه چک می‌شه." },
             { icon: "help", title: "کوییز زنده", desc: "سوال چندگزینه‌ای با تایمر و رتبه‌بندی لحظه‌ای." },
             { icon: "flag", title: "مسابقه‌ی تیمی", desc: "همه‌ی تیم‌ها یه سوال رو با محدودیت زمان حل می‌کنن." },
+            { icon: "chart", title: "داشبورد دانشجو", desc: "تمرین‌ها، کوییزها و مسابقه‌های خودت با نمره‌ها و نمودار فعالیت هفتگی." },
+            { icon: "trophy", title: "پنل معلم با نمودار", desc: "هر معلم فقط کلاس‌های خودش را می‌بیند: فعالیت دانشجوها، میانگین نمره‌ها و آمار تمرین و کوییز." },
           ] as const).map((f) => (
             <div key={f.title} className="card p-6 hover:shadow-lift hover:-translate-y-1 transition duration-300">
               <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-50 to-purple-50 grid place-items-center mb-3.5 text-primary">

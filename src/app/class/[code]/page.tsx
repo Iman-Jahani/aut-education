@@ -18,6 +18,7 @@ import { CellSkeleton, ClassPageSkeleton } from "@/components/Skeleton";
 import Icon from "@/components/Icon";
 import { useActiveItem } from "@/hooks/useActiveItem";
 import { joinClassByCode, getClassAdminPinHash } from "@/lib/classJoin";
+import { rememberClass } from "@/lib/joinedClasses";
 import { hashPin } from "@/lib/utils";
 import { notebookToRows, cellsToNotebook, notebookFileName } from "@/lib/notebook";
 import type { Cell, ClassSession, Quiz, Competition } from "@/lib/types";
@@ -63,7 +64,7 @@ function clearStoredTeam(sessionId: string) {
 export default function ClassPage({ params }: { params: { code: string } }) {
   const { code } = params;
   const router = useRouter();
-  const { user, ready, needsProfile, displayName, avatar } = useAuth();
+  const { user, ready, needsProfile, displayName, avatar, isTeacher } = useAuth();
   const toast = useToast();
 
   const [session, setSession] = useState<ClassSession | null>(null);
@@ -107,7 +108,8 @@ export default function ClassPage({ params }: { params: { code: string } }) {
       }
       if (!cls) return;
       setSession(cls);
-      localStorage.setItem("lastSessionCode", cls.code);
+      // Remember it on this device — powers the dashboard "my classes" list.
+      rememberClass(cls);
       setCurrentTeam(getStoredTeam(cls.id));
       // Restore teacher mode after a refresh: the hash we stored when the
       // teacher entered the PIN is compared with the class PIN hash.
@@ -119,6 +121,13 @@ export default function ClassPage({ params }: { params: { code: string } }) {
       }
     })();
   }, [code]);
+
+  // A teacher account enters the class in teacher mode right away: the role is
+  // proven by the account itself (middleware and RLS use the same rule), so
+  // asking for the class PIN would be pointless. Students keep the PIN unlock.
+  useEffect(() => {
+    if (isTeacher) setTeacherMode(true);
+  }, [isTeacher]);
 
   // ---------- Cells ----------
   const loadCells = useCallback(async () => {
@@ -245,6 +254,12 @@ export default function ClassPage({ params }: { params: { code: string } }) {
   // afterId: undefined → append at the end · null → insert at the very top · string → right after that cell
   const addCell = async (afterId?: string | null) => {
     if (!session || !user) return;
+    // Cells carry the author name — ask for it instead of writing an empty one.
+    if (!displayName) {
+      setProfileOpen(true);
+      toast("اول اسم و آواتارت را تنظیم کن", "err");
+      return;
+    }
     const now = Date.now();
     let position: number;
     if (afterId === undefined) {
@@ -364,6 +379,13 @@ export default function ClassPage({ params }: { params: { code: string } }) {
   };
 
   const toggleTeacherMode = () => {
+    // Teachers are already trusted — just flip the mode, no PIN needed.
+    if (isTeacher) {
+      const next = !teacherMode;
+      setTeacherMode(next);
+      toast(next ? "حالت معلم فعال شد" : "حالت معلم غیرفعال شد", next ? "ok" : "info");
+      return;
+    }
     if (teacherMode) {
       setTeacherMode(false);
       if (session) {
@@ -442,6 +464,7 @@ export default function ClassPage({ params }: { params: { code: string } }) {
 
           <button
             onClick={toggleTeacherMode}
+            title={isTeacher ? "حساب معلم — حالت خودکار فعال است (بدون رمز)" : "ورود به حالت معلم با رمز کلاس"}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition ${
               teacherMode ? "bg-amber-500 text-white shadow-soft" : "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
             }`}
@@ -452,8 +475,10 @@ export default function ClassPage({ params }: { params: { code: string } }) {
 
           <button
             onClick={() => setProfileOpen(true)}
-            className="flex items-center gap-2 pl-3 pr-1 py-1 rounded-full bg-white border border-line hover:shadow-soft transition"
-            title="پروفایل"
+            className={`flex items-center gap-2 pl-3 pr-1 py-1 rounded-full bg-white border hover:shadow-soft transition ${
+              needsProfile ? "border-primary/40 ring-2 ring-primary/25" : "border-line"
+            }`}
+            title={needsProfile ? "نام و آواتارت را تنظیم کن" : "پروفایل"}
           >
             <span className="w-7 h-7 rounded-full bg-indigo-50 grid place-items-center text-base">{avatar}</span>
             <span className="text-xs font-bold max-w-[90px] truncate hidden sm:block">{displayName}</span>
@@ -679,7 +704,8 @@ export default function ClassPage({ params }: { params: { code: string } }) {
         />
       )}
 
-      <ProfileModal open={needsProfile || profileOpen} firstTime={needsProfile} onClose={() => setProfileOpen(false)} />
+      {/* Opened only when the user asks for it (the avatar button). */}
+      <ProfileModal open={profileOpen} firstTime={needsProfile} onClose={() => setProfileOpen(false)} />
       <TeamPicker
         open={teamPickerOpen}
         onClose={() => setTeamPickerOpen(false)}

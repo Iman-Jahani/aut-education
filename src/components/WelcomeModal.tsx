@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { joinClassByCode } from "@/lib/classJoin";
+import { rememberClass } from "@/lib/joinedClasses";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/components/ToastProvider";
 import { generateSessionCode, hashPin } from "@/lib/utils";
@@ -36,7 +37,7 @@ export default function WelcomeModal({
     try {
       // Join through the `join_class_by_code` RPC (no direct class_sessions read).
       const cls = await joinClassByCode(code);
-      localStorage.setItem("lastSessionCode", cls.code);
+      rememberClass(cls); // dashboard "my classes" list + lastSessionCode
       onClose();
       router.push(`/class/${cls.code}`);
     } catch (err) {
