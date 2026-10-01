@@ -77,6 +77,7 @@ export default function ClassPage({ params }: { params: { code: string } }) {
   const cellsLoadedOnce = useRef(false);
   const pendingScroll = useRef<string | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
+  const [focusedCellId, setFocusedCellId] = useState<string | null>(null);
   const [currentTeam, setCurrentTeam] = useState<CurrentTeam | null>(null);
 
   const [teacherMode, setTeacherMode] = useState(false);
@@ -293,6 +294,9 @@ export default function ClassPage({ params }: { params: { code: string } }) {
       return;
     }
     pendingScroll.current = data.id;
+    setFocusedCellId(data.id);
+    // clear focus after 4s so re-renders don't steal cursor later
+    setTimeout(() => setFocusedCellId((curr) => (curr === data.id ? null : curr)), 4000);
     setCells((prev) => sortCells([...prev.filter((c) => c.id !== data.id), data as Cell]));
   };
 
@@ -616,6 +620,7 @@ export default function ClassPage({ params }: { params: { code: string } }) {
                       cell={cell}
                       teacherMode={teacherMode}
                       authorAvatar={authorAvatars[cell.author_id] || null}
+                      autoFocus={focusedCellId === cell.id}
                       onDeleted={(id) => setCells((p) => p.filter((c) => c.id !== id))}
                     />
                   </div>

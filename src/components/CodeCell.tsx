@@ -20,6 +20,7 @@ export default function CodeCell({
   onDeleted,
   teacherMode = false,
   authorAvatar = null,
+  autoFocus = false,
 }: {
   cell: Cell;
   onDeleted: (id: string) => void;
@@ -27,6 +28,8 @@ export default function CodeCell({
   teacherMode?: boolean;
   /** Avatar emoji picked by the author (falls back to initials). */
   authorAvatar?: string | null;
+  /** When true the editor grabs focus right after mount (new cell). */
+  autoFocus?: boolean;
 }) {
   const { user } = useAuth();
   const toast = useToast();
@@ -47,7 +50,26 @@ export default function CodeCell({
   const [tags, setTags] = useState<string[]>(cell.tags || []);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLocalEdit = useRef(0);
+  const editorViewRef = useRef<import("@codemirror/view").EditorView | null>(null);
   const extensions = useMemo(() => [python(), noPaste(() => toast("پیست کردن در سلول‌ها غیرفعاله؛ خودت تایپ کن", "err"))], [toast]);
+
+  // New cells grab focus immediately so the student can start typing.
+  const handleCreateEditor = useCallback(
+    (view: import("@codemirror/view").EditorView) => {
+      editorViewRef.current = view;
+      if (autoFocus) {
+        // Let the scroll-into-view animation settle, then focus.
+        requestAnimationFrame(() => {
+          setTimeout(() => view.focus(), 120);
+        });
+      }
+    },
+    [autoFocus]
+  );
+  // If autoFocus becomes true after mount (cell list re-render), focus then.
+  useEffect(() => {
+    if (autoFocus) editorViewRef.current?.focus();
+  }, [autoFocus]);
 
   const isOwn = cell.author_id === user?.id;
   const isPersonal = !cell.team_name;
@@ -239,6 +261,8 @@ export default function CodeCell({
         minHeight="100px"
         maxHeight="620px"
         basicSetup={{ lineNumbers: true, autocompletion: true }}
+        autoFocus={autoFocus}
+        onCreateEditor={handleCreateEditor}
         onKeyDown={(e) => {
           if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
             e.preventDefault();

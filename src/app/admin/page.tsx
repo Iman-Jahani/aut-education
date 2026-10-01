@@ -40,7 +40,8 @@ const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
   ended: { text: "پایان‌یافته", cls: "bg-slate-500/15 text-slate-300 border-slate-500/30" },
 };
 
-type Tab = "overview" | "classes" | "students" | "exercises" | "quizzes" | "competitions";
+type Tab = "overview" | "classes" | "students" | "content" | "exercises" | "quizzes" | "competitions";
+type StudentSort = "score" | "cells" | "solved" | "quizPct" | "last";
 
 const TABS: { key: Tab; label: string; icon: IconName }[] = [
   { key: "overview", label: "نمای کلی", icon: "chart" },
@@ -90,6 +91,30 @@ export default function AdminPage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [search, setSearch] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [studentSort, setStudentSort] = useState<StudentSort>("score");
+  const [classFilter, setClassFilter] = useState<string>("all");
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copyWithFeedback = useCallback((text: string, id: string) => {
+    void navigator.clipboard?.writeText(text);
+    setCopied(id);
+    setTimeout(() => setCopied((c) => (c === id ? null : c)), 1800);
+  }, []);
+
+  const exportCsv = useCallback(
+    (rows: string[][], filename: string) => {
+      const bom = "\uFEFF";
+      const csv = rows.map((r) => r.map((c) => `"` + String(c).replace(/"/g, `""`) + `"`).join(",")).join("\r\n");
+      const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+    []
+  );
 
   const loadData = useCallback(async () => {
     if (!user) return;
@@ -352,10 +377,41 @@ export default function AdminPage() {
     ];
   }, [data.exerciseSubs]);
 
+  // students filtered by search + class, then sorted by studentSort
+  const classStudentIds = useMemo(() => {
+    if (classFilter === "all") return null;
+    const teamIds = (teamsByClass[classFilter] || []).map((x) => x.id);
+    const members = data.members.filter((m) => teamIds.includes(m.team_id)).map((m) => m.user_id);
+    const cellAuthors = (cellsByClass[classFilter] || []).map((c) => c.author_id);
+    return new Set<string>([...members, ...cellAuthors]);
+  }, [classFilter, data.members, teamsByClass, cellsByClass]);
+
   const filteredStudents = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return students.filter((s) => !q || s.name.toLowerCase().includes(q)).sort((a, b) => b.score - a.score);
-  }, [students, search]);
+    let list = students.filter((s) => {
+      if (q && !s.name.toLowerCase().includes(q)) return false;
+      if (classStudentIds && !classStudentIds.has(s.id)) return false;
+      return true;
+    });
+    const cmp: Record<StudentSort, (a: typeof list[number], b: typeof list[number]) => number> = {
+      score: (a, b) => b.score - a.score,
+      cells: (a, b) => b.cells - a.cells,
+      solved: (a, b) => b.solved - a.solved || b.score - a.score,
+      quizPct: (a, b) => b.quizPct - a.quizPct || b.score - a.score,
+      last: (a, b) => b.last - a.last,
+    };
+    return [...list].sort(cmp[studentSort] || cmp.score);
+  }, [students, search, classStudentIds, studentSort]);
+
+  const inactiveStudents = useMemo(() => {
+    const week = Date.now() - 7 * 864e5;
+    const twoWeeks = Date.now() - 14 * 864e5;
+    return {
+      week: students.filter((s) => s.last > 0 && s.last < week),
+      twoWeeks: students.filter((s) => s.last > 0 && s.last < twoWeeks),
+      never: students.filter((s) => s.last === 0),
+    };
+  }, [students]);
 
   // ---------- guards ----------
   if (!ready) {
@@ -426,7 +482,7 @@ export default function AdminPage() {
         </div>
 
         {/* Tabs */}
-        <div className="max-w-6xl mx-auto px-6 pb-3 flex items-center gap-1.5 overflow-x-auto">
+        <div className="max-w-6xl mx-auto px-6 pb-2 flex items-center gap-1.5 overflow-x-auto">
           {TABS.map((t) => (
             <button
               key={t.key}
@@ -438,7 +494,66 @@ export default function AdminPage() {
               <Icon name={t.icon} className="w-3.5 h-3.5" /> {t.label}
             </button>
           ))}
+          <span className="flex-1" />
+          <button
+            onClick={() => {
+              if (tab === "students") {
+                exportCsv(
+                  [["نام", "سلول", "تمرین درست/کل", "میانگین کوییز٪", "مسابقه", "امتیاز", "آخرین فعالیت"], ...filteredStudents.map((s) => [s.name, String(s.cells), `${s.solved}/${s.subs}`, String(s.quizPct), String(s.comps), String(s.score), s.last ? new Date(s.last).toLocaleString("fa-IR") : "—"])],
+                  "students.csv"
+                );
+              } else if (tab === "classes") {
+                exportCsv(
+                  [["عنوان", "کد", "تیم", "سلول", "تمرین", "کوییز", "مسابقه"], ...filteredSessions.map((s) => [s.title, s.code, String((teamsByClass[s.id] || []).length), String((cellsByClass[s.id] || []).length), String((exercisesByClass[s.id] || []).length), String((quizzesByClass[s.id] || []).length), String((compsByClass[s.id] || []).length)])],
+                  "classes.csv"
+                );
+              } else {
+                exportCsv(
+                  [["کلاس", "عنوان", "نوع", "تعداد"], ...[...data.exercises.map((e) => [data.sessions.find((s) => s.id === e.class_id)?.title || "", e.title, "تمرین", String(data.exerciseSubs.filter((x) => x.exercise_id === e.id).length)]), ...data.quizzes.map((q) => [data.sessions.find((s) => s.id === q.class_id)?.title || "", q.title, "کوییز", String(data.quizAnswers.filter((a) => a.quiz_id === q.id).length)]), ...data.competitions.map((c) => [data.sessions.find((s) => s.id === c.class_id)?.title || "", c.title, "مسابقه", String(data.compSubs.filter((x) => x.competition_id === c.id).length)])]],
+                  "content.csv"
+                );
+              }
+            }}
+            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700 whitespace-nowrap"
+            title="خروجی CSV تب فعلی"
+          >
+            <Icon name="download" className="w-3.5 h-3.5" /> خروجی CSV
+          </button>
         </div>
+        {/* Secondary toolbar for students tab */}
+        {tab === "students" && (
+          <div className="max-w-6xl mx-auto px-6 pb-3 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] text-slate-500">مرتب‌سازی:</span>
+            {(
+              [
+                ["score", "امتیاز"],
+                ["cells", "سلول"],
+                ["solved", "تمرین درست"],
+                ["quizPct", "کوییز٪"],
+                ["last", "آخرین فعالیت"],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setStudentSort(k)}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${studentSort === k ? "bg-indigo-500 text-white border-indigo-500" : "bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200"}`}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="w-px h-4 bg-slate-700 mx-1 hidden sm:block" />
+            <span className="text-[11px] text-slate-500">کلاس:</span>
+            <button onClick={() => setClassFilter("all")} className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${classFilter === "all" ? "bg-indigo-500 text-white border-indigo-500" : "bg-slate-800 text-slate-400 border-slate-700"}`}>همه</button>
+            {data.sessions.slice(0, 8).map((s) => (
+              <button key={s.id} onClick={() => setClassFilter(s.id)} className={`px-2.5 py-1 rounded-full text-[11px] font-bold border max-w-[140px] truncate ${classFilter === s.id ? "bg-indigo-500 text-white border-indigo-500" : "bg-slate-800 text-slate-400 border-slate-700"}`} title={s.title}>
+                {s.title}
+              </button>
+            ))}
+            {(inactiveStudents.week.length > 0 || inactiveStudents.never.length > 0) && (
+              <span className="text-[11px] text-amber-400 mr-auto">{inactiveStudents.week.length > 0 ? `${inactiveStudents.week.length} نفر هفتهٔ اخیر غیرفعال` : ""}{inactiveStudents.week.length > 0 && inactiveStudents.never.length > 0 ? " · " : ""}{inactiveStudents.never.length > 0 ? `${inactiveStudents.never.length} نفر بدون فعالیت` : ""}</span>
+            )}
+          </div>
+        )}
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8 space-y-6">
@@ -532,6 +647,23 @@ export default function AdminPage() {
                   </div>
 
                   <div className="bg-slate-800/60 border border-slate-700 rounded-2xl p-5">
+                    <Block title="نیازمند توجه ⚠ (۷+ روز غیرفعال، ولی قبلاً فعالیت داشته‌اند)" icon="alert">
+                      {inactiveStudents.week.length === 0 ? (
+                        <Empty text="همه فعال‌اند — عالی!" />
+                      ) : (
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          {inactiveStudents.week.slice(0, 12).map((s) => (
+                            <button key={s.id} onClick={() => { setClassFilter("all"); setTab("students"); setStudentSort("last"); }} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20" title={s.last ? new Date(s.last).toLocaleString("fa-IR") : ""}>
+                              {s.avatar} {s.name} · {fmtRelative(new Date(s.last).toISOString())}
+                            </button>
+                          ))}
+                          {inactiveStudents.week.length > 12 && <span className="text-[11px] text-slate-500">+{inactiveStudents.week.length - 12} نفر دیگر</span>}
+                        </div>
+                      )}
+                    </Block>
+                  </div>
+
+                  <div className="bg-slate-800/60 border border-slate-700 rounded-2xl p-5">
                     <Block title="دانشجوهای برتر (بر اساس امتیاز)" icon="trophy">
                       {topStudents.length === 0 ? (
                         <Empty text="هنوز دانشجویی فعالیتی ثبت نکرده." />
@@ -609,17 +741,22 @@ export default function AdminPage() {
                               <div className="font-extrabold text-sm text-white truncate">{s.title}</div>
                               <div className="text-[11px] text-slate-500">
                                 کد: <span className="font-mono tracking-widest">{s.code}</span> · {faNum(who.size)} دانشجو ·{" "}
-                                {faNum(clsCells.length)} سلول
+                                {faNum(clsCells.length)} سلول{(() => { const ts = dates.length ? Math.max(...dates.map((d) => new Date(d).getTime())) : 0; return ts ? ` · آخرین فعالیت ${fmtRelative(new Date(ts).toISOString())}` : ""; })()}
                               </div>
                             </div>
                             <div className="flex-1" />
                             <button
-                              onClick={() => {
-                                void navigator.clipboard?.writeText(`${window.location.origin}/class/${s.code}`);
-                              }}
+                              onClick={() => copyWithFeedback(`${window.location.origin}/class/${s.code}`, "link-" + s.id)}
                               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-700 hover:bg-slate-600"
                             >
-                              <Icon name="copy" className="w-4 h-4" /> کپی لینک
+                              <Icon name={copied === "link-" + s.id ? "check" : "copy"} className="w-4 h-4" /> {copied === "link-" + s.id ? "کپی شد ✓" : "کپی لینک"}
+                            </button>
+                            <button
+                              onClick={() => copyWithFeedback(s.code, "code-" + s.id)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-700 hover:bg-slate-600 font-mono tracking-widest"
+                              title="کپی کد کلاس"
+                            >
+                              <Icon name={copied === "code-" + s.id ? "check" : "copy"} className="w-3.5 h-3.5" /> {copied === "code-" + s.id ? "کپی شد" : s.code}
                             </button>
                             <Link
                               href={`/class/${s.code}`}
@@ -719,23 +856,26 @@ export default function AdminPage() {
                 ) : (
                   <div className="bg-slate-800/60 border border-slate-700 rounded-2xl overflow-hidden">
                     <div className="hidden sm:grid grid-cols-12 gap-2 px-5 py-3 text-[11px] font-bold text-slate-400 bg-slate-900/60">
-                      <span className="col-span-4">دانشجو</span>
-                      <span className="col-span-2 text-center">سلول</span>
-                      <span className="col-span-2 text-center">تمرین درست</span>
-                      <span className="col-span-2 text-center">کوییز</span>
-                      <span className="col-span-2 text-center">امتیاز</span>
+                      <span className="col-span-3">دانشجو {filteredStudents.length !== students.length && <span className="text-indigo-400">({filteredStudents.length}/{students.length})</span>}</span>
+                      <SortTh label="سلول" k="cells" active={studentSort} set={setStudentSort} cls="col-span-2 text-center" />
+                      <SortTh label="تمرین درست" k="solved" active={studentSort} set={setStudentSort} cls="col-span-2 text-center" />
+                      <SortTh label="کوییز٪" k="quizPct" active={studentSort} set={setStudentSort} cls="col-span-2 text-center" />
+                      <SortTh label="امتیاز" k="score" active={studentSort} set={setStudentSort} cls="col-span-2 text-center" />
+                      <SortTh label="آخرین فعالیت" k="last" active={studentSort} set={setStudentSort} cls="col-span-1 text-center" />
                     </div>
                     <div className="divide-y divide-slate-700/70">
-                      {filteredStudents.map((s) => (
-                        <div key={s.id} className="grid grid-cols-12 gap-2 px-5 py-3 items-center">
-                          <span className="col-span-4 flex items-center gap-2 min-w-0">
+                      {filteredStudents.map((s) => {
+                        const idle = s.last > 0 && Date.now() - s.last > 7 * 864e5;
+                        return (
+                        <div key={s.id} className={`grid grid-cols-12 gap-2 px-5 py-3 items-center ${idle ? "bg-amber-500/[0.04]" : ""}`}>
+                          <span className="col-span-3 flex items-center gap-2 min-w-0">
                             <span className="w-7 h-7 rounded-full bg-slate-700 grid place-items-center shrink-0 text-sm">
                               {s.avatar}
                             </span>
                             <span className="min-w-0">
-                              <span className="block text-xs font-bold text-white truncate">{s.name}</span>
+                              <span className="block text-xs font-bold text-white truncate">{s.name}{idle && <span className="text-amber-400"> • غیرفعال</span>}</span>
                               <span className="block text-[10px] text-slate-500 truncate">
-                                {s.last ? `آخرین فعالیت: ${fmtRelative(new Date(s.last).toISOString())}` : "بدون فعالیت"}
+                                {faNum(s.comps)} مسابقه · {faNum(s.quizzes)} کوییز
                               </span>
                             </span>
                           </span>
@@ -745,8 +885,12 @@ export default function AdminPage() {
                           </span>
                           <span className="col-span-2 text-center text-xs font-bold text-amber-400">{faNum(s.quizPct)}٪</span>
                           <span className="col-span-2 text-center text-xs font-bold text-white">{faNum(s.score)}</span>
+                          <span className="col-span-1 text-center text-[10px] text-slate-500" title={s.last ? new Date(s.last).toLocaleString("fa-IR") : "بدون فعالیت"}>
+                            {s.last ? fmtRelative(new Date(s.last).toISOString()) : "—"}
+                          </span>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -863,6 +1007,15 @@ export default function AdminPage() {
 }
 
 // ---------- small building blocks (dark theme) ----------
+
+function SortTh({ label, k, active, set, cls }: { label: string; k: StudentSort; active: StudentSort; set: (s: StudentSort) => void; cls?: string }) {
+  const on = active === k;
+  return (
+    <button onClick={() => set(k)} className={`${cls || ""} hover:text-white transition ${on ? "text-indigo-300" : ""}`} title={`مرتب‌سازی بر اساس ${label}`}>
+      {label}{on ? " ▼" : ""}
+    </button>
+  );
+}
 
 function StatCard({ icon, label, value }: { icon: IconName; label: string; value: number }) {
   return (
