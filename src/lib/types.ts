@@ -203,3 +203,13 @@ export interface TeamMessage {
   text: string;
   created_at: string;
 }
+
+export interface AiHintRequest {
+  id: string;
+  user_id: string;
+  exercise_id: string;
+  code: string;
+  user_message: string | null;
+  ai_response: string;
+  created_at: string;
+}

@@ -15,6 +15,20 @@ import Icon from "@/components/Icon";
 import { noPaste } from "@/lib/editor";
 import type { Cell } from "@/lib/types";
 
+// Focus + put the cursor at the end (new cells are empty anyway).
+function focusSoon(view: import("@codemirror/view").EditorView) {
+  requestAnimationFrame(() => {
+    try {
+      if (!document.contains(view.dom)) return;
+      view.focus();
+      view.dispatch({ selection: { anchor: view.state.doc.length } });
+    } catch {
+      /* the view was replaced — the retry effect below gets the new one */
+    }
+  });
+}
+
+
 export default function CodeCell({
   cell,
   onDeleted,
@@ -52,23 +66,39 @@ export default function CodeCell({
   const lastLocalEdit = useRef(0);
   const editorViewRef = useRef<import("@codemirror/view").EditorView | null>(null);
   const extensions = useMemo(() => [python(), noPaste(() => toast("پیست کردن در سلول‌ها غیرفعاله؛ خودت تایپ کن", "err"))], [toast]);
+  // Stable object: a fresh `basicSetup` literal on every render would make
+  // CodeMirror reconfigure (and drop focus) on every keystroke/re-render.
+  const basicSetup = useMemo(() => ({ lineNumbers: true, autocompletion: true }), []);
 
   // New cells grab focus immediately so the student can start typing.
   const handleCreateEditor = useCallback(
     (view: import("@codemirror/view").EditorView) => {
       editorViewRef.current = view;
-      if (autoFocus) {
-        // Let the scroll-into-view animation settle, then focus.
-        requestAnimationFrame(() => {
-          setTimeout(() => view.focus(), 120);
-        });
-      }
+      if (autoFocus) focusSoon(view);
     },
     [autoFocus]
   );
-  // If autoFocus becomes true after mount (cell list re-render), focus then.
+
+  // Retry-based focus: the editor view may be (re)created after the parent
+  // re-renders (realtime reload replaces the cells array) — keep trying until
+  // the live view is focusable, so nothing steals the cursor away.
   useEffect(() => {
-    if (autoFocus) editorViewRef.current?.focus();
+    if (!autoFocus) return;
+    let alive = true;
+    let tries = 0;
+    const tick = () => {
+      if (!alive) return;
+      const view = editorViewRef.current;
+      if (view && document.contains(view.dom)) {
+        focusSoon(view);
+        return;
+      }
+      if (tries++ < 40) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    return () => {
+      alive = false;
+    };
   }, [autoFocus]);
 
   const isOwn = cell.author_id === user?.id;
@@ -260,7 +290,7 @@ export default function CodeCell({
         indentWithTab
         minHeight="100px"
         maxHeight="620px"
-        basicSetup={{ lineNumbers: true, autocompletion: true }}
+        basicSetup={basicSetup}
         autoFocus={autoFocus}
         onCreateEditor={handleCreateEditor}
         onKeyDown={(e) => {

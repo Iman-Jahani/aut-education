@@ -36,6 +36,73 @@ export default function ExerciseSolveModal({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const extensions = useMemo(() => [python(), noPaste(() => toast("پیست کردن غیرفعاله", "err"))], [toast]);
 
+  // ── AI Tutor ──────────────────────────────────────────────────────────
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiHint, setAiHint] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiHistory, setAiHistory] = useState<{ ai_response: string; created_at: string; user_message: string | null }[]>([]);
+  const [showAiHistory, setShowAiHistory] = useState(false);
+  const [showAiPanel, setShowAiPanel] = useState(false);
+
+  useEffect(() => {
+    // load recent hints for this exercise
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/ai-hint?exercise_id=${encodeURIComponent(exercise.id)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data.hints)) setAiHistory(data.hints);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [exercise.id]);
+
+  const askAi = async () => {
+    if (aiLoading) return;
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const res = await fetch("/api/ai-hint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          exercise_id: exercise.id,
+          code,
+          user_message: aiQuestion.trim() || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // `detail` carries the provider message (retired model, bad key, …);
+        // it is only shown outside production so the classroom UI stays clean.
+        const detail = process.env.NODE_ENV !== "production" && data?.detail ? `\n${data.detail}` : "";
+        setAiError((data?.error || `خطا (${res.status})`) + detail);
+        return;
+      }
+      // NOTE: the route answers with `{ response }` — older builds used `hint`,
+      // so both are accepted (reading only `hint` left the panel empty).
+      const hint = String(data?.response ?? data?.hint ?? "").trim();
+      if (!hint) {
+        setAiError("جوابی از سرور برنگشت — چند ثانیه بعد دوباره «گیر کردم» را بزن.");
+        return;
+      }
+      setAiHint(hint);
+      setShowAiPanel(true);
+      setAiHistory((prev) => [{ ai_response: hint, created_at: new Date().toISOString(), user_message: aiQuestion.trim() || null }, ...prev].slice(0, 10));
+      setAiQuestion("");
+    } catch (e) {
+      setAiError((e as Error).message);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
@@ -118,6 +185,88 @@ export default function ExerciseSolveModal({
               {exercise.hint}
             </div>
           )}
+
+          {/* ── AI Tutor trigger ─────────────────────────────────────── */}
+          <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={askAi}
+                disabled={aiLoading}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-extrabold text-white bg-gradient-to-br from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 disabled:opacity-50 shadow-sm"
+              >
+                <Icon name="help" className="w-4 h-4" />
+                {aiLoading ? "دارم فکر می‌کنم…" : "🤔 گیر کردم"}
+              </button>
+              <span className="text-xs text-violet-800/80">راهنمایی مرحله‌ای می‌گیری — جواب کامل لو نمی‌ره</span>
+              {aiHistory.length > 0 && (
+                <button
+                  onClick={() => setShowAiHistory((v) => !v)}
+                  className="mr-auto text-xs font-bold px-2.5 py-1 rounded-full border bg-white border-violet-200 text-violet-700 hover:bg-violet-50"
+                >
+                  سابقه {aiHistory.length}
+                </button>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                value={aiQuestion}
+                onChange={(e) => setAiQuestion(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    askAi();
+                  }
+                }}
+                placeholder="سوالت رو کوتاه بنویس (اختیاری) — مثلا: حلقه‌م درست نمی‌چرخه"
+                className="flex-1 min-w-0 rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300 placeholder:text-slate-400"
+              />
+              <button
+                onClick={askAi}
+                disabled={aiLoading}
+                className="shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-bold border bg-white border-violet-200 text-violet-700 hover:bg-violet-50 disabled:opacity-50"
+              >
+                <Icon name="send" className="w-4 h-4" /> بفرست
+              </button>
+            </div>
+
+            {aiLoading && (
+              <div className="rounded-lg bg-white border border-violet-100 p-3 text-xs text-muted flex items-center gap-2">
+                <span className="inline-block w-4 h-4 border-2 border-violet-300 border-t-transparent rounded-full animate-spin" />
+                مربی هوشمند داره کد و تست‌هات رو بررسی می‌کنه…
+              </div>
+            )}
+            {aiError && (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-800 whitespace-pre-wrap">
+                {aiError}
+              </div>
+            )}
+            {(aiHint || showAiPanel) && aiHint && !aiLoading && (
+              <div className="rounded-xl bg-white border border-violet-200 p-3.5 shadow-sm">
+                <div className="flex items-center gap-1.5 text-xs font-extrabold text-violet-700 mb-2">
+                  <Icon name="sparkles" className="w-4 h-4" /> راهنمایی مربی
+                  <button onClick={() => setShowAiPanel(false)} className="mr-auto text-muted hover:text-ink">
+                    <Icon name="x" className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="text-sm leading-7 text-slate-800 whitespace-pre-wrap">{aiHint}</div>
+                <p className="mt-2 text-[11px] text-muted">نکته: جواب کامل داده نمی‌شه — قدم‌به‌قدم جلو برو و دوباره «گیر کردم» بزن.</p>
+              </div>
+            )}
+            {showAiHistory && aiHistory.length > 0 && (
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {aiHistory.map((h, i) => (
+                  <div key={i} className="rounded-lg bg-white border border-slate-200 p-2.5 text-xs">
+                    <div className="text-muted mb-1 flex items-center gap-2">
+                      <Icon name="clock" className="w-3 h-3" />
+                      {new Date(h.created_at).toLocaleString("fa-IR")} {h.user_message ? `— «${h.user_message}»` : ""}
+                    </div>
+                    <div className="text-slate-800 whitespace-pre-wrap leading-6">{h.ai_response}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <CodeMirror
             value={code}
