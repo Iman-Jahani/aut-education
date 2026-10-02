@@ -1,15 +1,15 @@
+'use client';
+
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
 
 export default function TeacherTournamentDetailPage({ params }: { params: { id: string } }) {
   const [tournament, setTournament] = useState<any | null>(null);
   const [participants, setParticipants] = useState<Array<any>>([]);
   const [battles, setBattles] = useState<Array<any>>([]);
-  [loading, setLoading] = useState(true);
-  [error, setError] = useState<string | null>(null);
-  [activeBattle, setActiveBattle] = useState<any | null>(null);
-  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeBattle, setActiveBattle] = useState<any | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -21,7 +21,7 @@ export default function TeacherTournamentDetailPage({ params }: { params: { id: 
     try {
       // Fetch tournament
       const tRes = await fetch(`/api/tournament/${params.id}`);
-      if (!tRes.ok) throw new Error('Failed to fetch tournament');
+      if (!tRes.ok) throw new Error('خطا در دریافت تورنمنت');
       const tData = await tRes.json();
       setTournament(tData.tournament);
 
@@ -37,12 +37,11 @@ export default function TeacherTournamentDetailPage({ params }: { params: { id: 
       if (bRes.ok) {
         const bData = await bRes.json();
         setBattles(bData.battles ?? []);
-        // Find active battle
         const active = bData.battles?.find((b: any) => b.status === 'active');
         setActiveBattle(active ?? null);
       }
     } catch (err: any) {
-      setError(err.message ?? 'Unknown error');
+      setError(err.message ?? 'خطای ناشناخته');
     } finally {
       setLoading(false);
     }
@@ -57,12 +56,11 @@ export default function TeacherTournamentDetailPage({ params }: { params: { id: 
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || 'Failed to start');
+        throw new Error(err.error || 'خطا در شروع');
       }
-      // Refresh data
       await fetchData();
     } catch (err: any) {
-      setError(err.message ?? 'Unknown error');
+      setError(err.message ?? 'خطای ناشناخته');
     } finally {
       setLoading(false);
     }
@@ -77,33 +75,33 @@ export default function TeacherTournamentDetailPage({ params }: { params: { id: 
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || 'Failed to advance');
+        throw new Error(err.error || 'خطا در پیشبرد دور');
       }
       await fetchData();
     } catch (err: any) {
-      setError(err.message ?? 'Unknown error');
+      setError(err.message ?? 'خطای ناشناخته');
     } finally {
       setLoading(false);
     }
   }
 
-  if (loading) return <div className="p-6">Loading...</div>;
-  if (error) return <div className="p-6 text-red-600">Error: {error}</div>;
-  if (!tournament) return <div className="p-6">Tournament not found</div>;
+  if (loading) return <div className="p-6">در حال بارگذاری…</div>;
+  if (error) return <div className="p-6 text-red-600">خطا: {error}</div>;
+  if (!tournament) return <div className="p-6">تورنمنت پیدا نشد</div>;
 
   return (
-    <div className="p-6">
+    <div className="p-6" dir="rtl">
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">{tournament.title}</h1>
         <div className="text-sm text-gray-500">
-          ID: {tournament.id}
+          شناسه: {tournament.id}
         </div>
       </div>
 
       <div className="mb-6 p-4 bg-gray-50 rounded">
         <p className="text-gray-700">{tournament.description}</p>
         <div className="mt-2 flex flex-wrap gap-4 text-sm">
-          <span>زمان limitado: {tournament.time_limit} ثانیه</span>
+          <span>زمان: {tournament.time_limit} ثانیه</span>
           <span>حداکثر شرکت‌کنندگان: {tournament.max_participants}</span>
           {tournament.is_group_stage && (
             <>
@@ -146,7 +144,7 @@ export default function TeacherTournamentDetailPage({ params }: { params: { id: 
             </div>
           )}
           <p className="mt-2 text-sm text-gray-500">
-            {participants.length}/{tournament.max_participants} 자리 پر شده است
+            {participants.length}/{tournament.max_participants} صندلی پر شده است
           </p>
         </div>
       )}
@@ -167,7 +165,7 @@ export default function TeacherTournamentDetailPage({ params }: { params: { id: 
                   )}
                 </div>
                 <div className="mt-2">
-                  <span>میزبان: {b.host_id}</span> vs <span>مهمان: {b.guest_id}</span>
+                  <span>میزبان: {b.host_id}</span> در برابر <span>مهمان: {b.guest_id}</span>
                 </div>
                 <div className="mt-1 text-xs">
                   وضعیت: {b.status}
@@ -193,7 +191,7 @@ export default function TeacherTournamentDetailPage({ params }: { params: { id: 
               )}
             </div>
             <div className="mt-2">
-              <span>میزبان: {activeBattle.host_id}</span> vs <span>مهمان: {activeBattle.guest_id}</span>
+              <span>میزبان: {activeBattle.host_id}</span> در برابر <span>مهمان: {activeBattle.guest_id}</span>
             </div>
             <div className="mt-1 text-xs">
               سوال: {activeBattle.battle_question_id}
@@ -224,10 +222,10 @@ export default function TeacherTournamentDetailPage({ params }: { params: { id: 
             </button>
           )}
           <Link
-            href={`/teacher/tournaments`}
+            href="/teacher/tournaments"
             className="btn btn-secondary px-4 py-2 rounded"
           >
-            به لیست برگردن
+            بازگشت به لیست
           </Link>
         </div>
       </div>
