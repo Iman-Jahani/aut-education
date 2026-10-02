@@ -204,6 +204,74 @@ export interface TeamMessage {
   created_at: string;
 }
 
+// ---------------------------------------------------------------------------
+// ⚔️ 1v1 Code Battle (see supabase/BATTLE.sql)
+// ---------------------------------------------------------------------------
+
+export type BattleStatus = "waiting" | "ready" | "active" | "finished" | "cancelled";
+
+export interface Battle {
+  id: string;
+  class_id: string;
+  exercise_id: string | null;
+  host_id: string;
+  guest_id: string | null;
+  room_code: string;
+  status: BattleStatus;
+  time_limit: number;
+  host_ready: boolean;
+  guest_ready: boolean;
+  host_last_ping: string | null;
+  guest_last_ping: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  winner_id: string | null;
+  created_at: string;
+}
+
+export interface BattleSubmission {
+  id?: string;
+  battle_id: string;
+  user_id: string;
+  code: string;
+  passed_tests: number;
+  total_tests: number;
+  test_results: TestResult[];
+  is_final: boolean;
+  submitted_at: string;
+}
+
+/** One side of a battle as the state endpoint reports it. */
+export interface BattlePlayer {
+  id: string;
+  name: string;
+  avatar: string;
+  ready: boolean;
+  passed: number;
+  total: number;
+  isFinal: boolean;
+  connected: boolean;
+}
+
+export interface BattleStateResponse {
+  battle: Battle;
+  exercise: Exercise | null;
+  me: BattlePlayer;
+  opponent: BattlePlayer | null;
+  remainingMs: number;
+  countdownMs: number;
+  outcome: "win" | "lose" | "draw" | null;
+}
+
+export interface BattleStats {
+  played: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  xp: number;
+}
+
+
 export interface AiHintRequest {
   id: string;
   user_id: string;

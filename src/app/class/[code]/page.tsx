@@ -533,6 +533,9 @@ export default function ClassPage({ params }: { params: { code: string } }) {
             )}
             {comp.item && !compNeedsAttention && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />}
           </button>
+          <Link href="/battle" className={`${tabBase} text-muted hover:bg-white hover:text-ink hover:shadow-soft`}>
+            <Icon name="zap" className="w-4 h-4" /> نبرد
+          </Link>
           <button onClick={() => setTeamPickerOpen(true)} className={`${tabBase} text-muted hover:bg-white hover:text-ink hover:shadow-soft sm:hidden`}>
             <Icon name="users" className="w-4 h-4" /> {currentTeam ? currentTeam.name : "تیم"}
           </button>

@@ -162,6 +162,9 @@ export default function LandingPage() {
                     <Link href="/dashboard" className="btn-ghost !px-6 !py-3.5 inline-flex items-center gap-2">
                       <Icon name="chart" className="w-4 h-4" /> داشبورد من
                     </Link>
+                    <Link href="/battle" className="btn-ghost !px-6 !py-3.5 inline-flex items-center gap-2">
+                      <Icon name="zap" className="w-4 h-4" /> ⚔️ نبرد
+                    </Link>
                     {isTeacher && (
                       <Link href="/admin" className="btn-ghost !px-6 !py-3.5 inline-flex items-center gap-2">
                         <Icon name="settings" className="w-4 h-4" /> پنل مدیریت
