@@ -1,6 +1,8 @@
+"use client";
+
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
+import { useRouter } from 'next/navigation';
 
 export default function TournamentDetailPage({ params }: { params: { id: string } }) {
   const [tournament, setTournament] = useState<any | null>(null);
