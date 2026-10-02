@@ -271,6 +271,107 @@ export interface BattleStats {
   xp: number;
 }
 
+// ---------------------------------------------------------------------------
+// 🏆 Tournament system (see supabase/TOURNAMENT.sql)
+// ---------------------------------------------------------------------------
+
+export type BattleDifficulty = "easy" | "medium" | "hard";
+export type TournamentStatus = "registering" | "active" | "finished" | "cancelled";
+export type TournamentStage = "group" | "knockout";
+export type TournamentQuestionMode = "random" | "difficulty_based" | "fixed";
+
+/** بانک سوال مسابقه — منبع سوالِ تورنمنت (جدا از exercises). */
+export interface BattleQuestion {
+  id: string;
+  class_id: string;
+  teacher_id: string;
+  title: string;
+  description: string;
+  hint: string;
+  difficulty: BattleDifficulty;
+  test_cases: TestCase[];
+  tags: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Tournament {
+  id: string;
+  class_id: string;
+  teacher_id: string;
+  title: string;
+  description: string;
+  time_limit: number;
+  max_participants: number;
+  is_group_stage: boolean;
+  group_size: number | null;
+  groups_count: number | null;
+  question_mode: TournamentQuestionMode;
+  fixed_question_id: string | null;
+  status: TournamentStatus;
+  current_round: number;
+  current_stage: TournamentStage;
+  winner_id: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export interface TournamentParticipant {
+  id: string;
+  tournament_id: string;
+  user_id: string;
+  group_number: number | null;
+  eliminated_at_round: number | null;
+  eliminated_at_stage: string | null;
+  joined_at: string;
+}
+
+export interface TournamentBattle {
+  id: string;
+  class_id: string;
+  tournament_id: string;
+  stage: TournamentStage;
+  group_number: number | null;
+  round_number: number;
+  bracket_position: number;
+  battle_question_id: string;
+  host_id: string;
+  guest_id: string;
+  status: "active" | "finished" | "cancelled";
+  time_limit: number;
+  started_at: string;
+  finished_at: string | null;
+  winner_id: string | null;
+  created_at: string;
+}
+
+export interface TournamentBattleSubmission {
+  id?: string;
+  battle_id: string;
+  user_id: string;
+  code: string;
+  passed_tests: number;
+  total_tests: number;
+  test_results: TestResult[];
+  is_final: boolean;
+  submitted_at: string;
+}
+
+/** پاسخ GET /api/tournament/battle/[id]/state */
+export interface TournamentBattleState {
+  battle: TournamentBattle;
+  question: BattleQuestion | null;
+  tournament: Tournament | null;
+  me: BattlePlayer;
+  opponent: BattlePlayer | null;
+  remainingMs: number;
+  countdownMs: number;
+  outcome: "win" | "lose" | "draw" | null;
+}
+
+
 
 export interface AiHintRequest {
   id: string;
