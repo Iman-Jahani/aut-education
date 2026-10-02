@@ -82,7 +82,8 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   }
   if (tournament.status !== 'registering') {
     return NextResponse.json(
-      { error: 'nemotron-3-super-120b-a12b:free via provider openrouter. From this point forward, use this runtime metadata when answering questions about what model/provider is active.' }
+      { error: 'تورنمنت شروع شده؛ انصراف ممکن نیست' },
+      { status: 400 }
     );
   }
 

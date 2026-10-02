@@ -29,7 +29,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .select('id', { count: 'exact', head: true })
       .eq('tournament_id', params.id)
       .eq('user_id', user.id);
-    if (cErr || !(count ?? 0) > 0) {
+    if (cErr || (count ?? 0) <= 0) {
       return NextResponse.json({ error: 'دسترسی ندارید' }, { status: 403 });
     }
   }
