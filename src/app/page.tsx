@@ -55,6 +55,9 @@ export default function LandingPage() {
               <Link href="/dashboard" className="btn-ghost hidden sm:inline-flex">
                 <Icon name="chart" className="w-4 h-4" /> داشبورد من
               </Link>
+              <Link href="/playground" className="btn-ghost hidden sm:inline-flex">
+                <Icon name="terminal" className="w-4 h-4" /> تمرین آزاد
+              </Link>
               {isTeacher && (
                 <Link href="/admin" className="btn-ghost hidden sm:inline-flex">
                   پنل مدیریت
@@ -159,6 +162,9 @@ export default function LandingPage() {
                     >
                       <Icon name="grid" className="w-5 h-5" /> ورود به کلاس
                     </button>
+                    <Link href="/playground" className="btn-ghost !px-6 !py-3.5 inline-flex items-center gap-2">
+                      <Icon name="terminal" className="w-4 h-4" /> تمرین آزاد
+                    </Link>
                     <Link href="/dashboard" className="btn-ghost !px-6 !py-3.5 inline-flex items-center gap-2">
                       <Icon name="chart" className="w-4 h-4" /> داشبورد من
                     </Link>

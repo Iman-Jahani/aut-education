@@ -13,6 +13,24 @@ export interface ClassSession {
   created_at: string;
 }
 
+/**
+ * A «جلسه» (lesson) inside a class — see supabase/LESSONS.sql.
+ * A class is split into lessons so the workspace only ever shows one session
+ * at a time instead of every cell of the whole term on a single page.
+ */
+export interface Lesson {
+  id: string;
+  class_id: string;
+  title: string;
+  description: string | null;
+  /** Ordering among the class's lessons (same idea as cells.position). */
+  position: number | null;
+  /** Unpublished lessons stay hidden from students. */
+  is_published: boolean;
+  created_at: string;
+  updated_at?: string | null;
+}
+
 export interface Team {
   id: string;
   class_id: string;
@@ -39,6 +57,8 @@ export interface Cell {
   output: string | null;
   tags: string[] | null;
   position?: number | null;
+  /** Which lesson (جلسه) this cell belongs to — null for legacy/unsorted cells. */
+  lesson_id?: string | null;
   created_at: string;
   updated_at: string | null;
   comments_count?: number;
@@ -175,6 +195,32 @@ export interface CompetitionSubmission {
   code: string;
   submitted_at: string;
   submitter_key: string;
+}
+
+// ---------------------------------------------------------------------------
+// 🧪 Playground — personal notebooks (code without joining any class)
+// See supabase/PLAYGROUND.sql
+// ---------------------------------------------------------------------------
+
+export interface Notebook {
+  id: string;
+  user_id: string;
+  title: string;
+  position: number | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface NotebookCell {
+  id: string;
+  notebook_id: string;
+  user_id: string;
+  code: string | null;
+  output: string | null;
+  tags: string[] | null;
+  position: number | null;
+  created_at: string;
+  updated_at: string | null;
 }
 
 // Minimal Database type so `createClient<Database>()` gets some type-safety.

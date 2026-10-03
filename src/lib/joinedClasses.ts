@@ -75,3 +75,29 @@ export function forgetClass(id: string): JoinedClass[] {
   writeAll(next);
   return next;
 }
+
+// ---------------------------------------------------------------------------
+// Which lesson (جلسه) the user was last in, per class — device-local.
+// Powers the "ادامه‌ی جلسه‌ی قبل" shortcut and the resume hint on the class
+// page, so a student immediately sees where they left off.
+// ---------------------------------------------------------------------------
+
+const lessonKey = (classId: string) => `lastLesson_${classId}`;
+
+export function setLastLesson(classId: string, lessonId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(lessonKey(classId), lessonId);
+  } catch {
+    /* storage disabled — the shortcut is simply not shown */
+  }
+}
+
+export function getLastLesson(classId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(lessonKey(classId));
+  } catch {
+    return null;
+  }
+}

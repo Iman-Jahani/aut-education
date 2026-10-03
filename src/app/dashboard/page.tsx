@@ -229,6 +229,9 @@ export default function StudentDashboardPage() {
           <Link href="/" className="btn-ghost hidden sm:inline-flex">
             صفحه اصلی
           </Link>
+          <Link href="/playground" className="btn-ghost hidden sm:inline-flex">
+            <Icon name="terminal" className="w-4 h-4" /> تمرین آزاد
+          </Link>
           {isTeacher && (
             <Link href="/admin" className="btn-ghost hidden sm:inline-flex">
               پنل مدیریت

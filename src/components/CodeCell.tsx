@@ -13,7 +13,31 @@ import CommentsPanel from "@/components/CommentsPanel";
 import { Skeleton } from "@/components/Skeleton";
 import Icon from "@/components/Icon";
 import { noPaste } from "@/lib/editor";
-import type { Cell } from "@/lib/types";
+
+/**
+ * The minimum shape a cell needs to be rendered/edited by this component.
+ * Both the classroom `cells` row (`Cell`) and a playground
+ * `user_notebook_cells` row satisfy it — only `id` is really required.
+ */
+export interface CodeCellRow {
+  id: string;
+  code: string | null;
+  output: string | null;
+  tags: string[] | null;
+  created_at: string;
+  updated_at: string | null;
+  author_id?: string | null;
+  author_name?: string | null;
+  team_name?: string | null;
+  comments_count?: number;
+}
+
+/** Where auto-save / delete write to. Defaults to the classroom `cells` table. */
+export interface CellPersistTarget {
+  table: "cells" | "user_notebook_cells";
+}
+
+const CLASS_CELLS: CellPersistTarget = { table: "cells" };
 
 // Focus + put the cursor at the end (new cells are empty anyway).
 function focusSoon(view: import("@codemirror/view").EditorView) {
@@ -35,8 +59,10 @@ export default function CodeCell({
   teacherMode = false,
   authorAvatar = null,
   autoFocus = false,
+  persist = CLASS_CELLS,
+  simple = false,
 }: {
-  cell: Cell;
+  cell: CodeCellRow;
   onDeleted: (id: string) => void;
   /** Teachers may delete every cell inside their own class. */
   teacherMode?: boolean;
@@ -44,6 +70,13 @@ export default function CodeCell({
   authorAvatar?: string | null;
   /** When true the editor grabs focus right after mount (new cell). */
   autoFocus?: boolean;
+  /** Where auto-save/delete write. Defaults to the classroom `cells` table. */
+  persist?: CellPersistTarget;
+  /**
+   * Playground mode: hide class-only chrome (team badge, comments) and always
+   * allow deleting your own cells.
+   */
+  simple?: boolean;
 }) {
   const { user } = useAuth();
   const toast = useToast();
@@ -101,19 +134,22 @@ export default function CodeCell({
     };
   }, [autoFocus]);
 
-  const isOwn = cell.author_id === user?.id;
-  const isPersonal = !cell.team_name;
-  // Own cells are always deletable; in teacher mode every cell of the class is.
-  const canDelete = isOwn || teacherMode;
+  const isOwn = !!cell.author_id && cell.author_id === user?.id;
+  const isPersonal = simple || !cell.team_name;
+  // Own cells are always deletable; in teacher mode every cell of the class is,
+  // and in the playground every cell belongs to the current user.
+  const canDelete = simple || isOwn || teacherMode;
+  // Comments live on class cells only (the comments table points at `cells`).
+  const showCommentsUi = !simple;
 
   const save = useCallback(
     async (newCode: string, newOutput: string) => {
       await supabase
-        .from("cells")
+        .from(persist.table)
         .update({ code: newCode, output: newOutput, updated_at: new Date().toISOString() })
         .eq("id", cell.id);
     },
-    [cell.id]
+    [cell.id, persist.table]
   );
 
   // Pull in teammates' edits (realtime) unless I'm typing right now.
@@ -189,7 +225,7 @@ export default function CodeCell({
   const del = async () => {
     const whom = isOwn ? "این سلول حذف شود؟" : `سلول «${cell.author_name || "ناشناس"}» حذف شود؟`;
     if (!confirm(whom)) return;
-    const { error } = await supabase.from("cells").delete().eq("id", cell.id);
+    const { error } = await supabase.from(persist.table).delete().eq("id", cell.id);
     if (error) return toast("خطا: " + error.message, "err");
     toast("حذف شد", "ok");
     onDeleted(cell.id);
@@ -199,7 +235,7 @@ export default function CodeCell({
     const t = window.prompt("نام تگ:");
     if (!t || !t.trim()) return;
     const next = Array.from(new Set([...(cell.tags || []), t.trim()]));
-    const { error } = await supabase.from("cells").update({ tags: next }).eq("id", cell.id);
+    const { error } = await supabase.from(persist.table).update({ tags: next }).eq("id", cell.id);
     if (error) toast("خطا: " + error.message, "err");
     else setTags(next);
   };
@@ -207,7 +243,7 @@ export default function CodeCell({
   const removeTag = async (tag: string) => {
     if (!confirm(`تگ «${tag}» حذف شود؟`)) return;
     const next = (cell.tags || []).filter((t) => t !== tag);
-    const { error } = await supabase.from("cells").update({ tags: next }).eq("id", cell.id);
+    const { error } = await supabase.from(persist.table).update({ tags: next }).eq("id", cell.id);
     if (error) toast("خطا: " + error.message, "err");
     else setTags(next);
   };
@@ -227,40 +263,54 @@ export default function CodeCell({
       style={!isPersonal ? { borderTop: `3px solid ${colorOf(cell.team_name)}` } : undefined}
     >
       <div className="flex items-center gap-3 px-4 py-3 border-b border-line">
-        <div
-          className="w-10 h-10 rounded-xl grid place-items-center text-lg shrink-0 border border-line bg-white"
-          style={{ background: colorOf(cell.author_name) + "22" }}
-          title={cell.author_name || "ناشناس"}
-        >
-          {authorAvatar || initials(cell.author_name)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="font-bold text-sm truncate">
-            {cell.author_name || "ناشناس"}
-            {isOwn && (
-              <span className="mr-1.5 text-[10px] font-bold px-1.5 py-0.5 bg-primary/10 text-primary rounded">
-                شما
-              </span>
-            )}
-          </div>
-          <div className="text-[11px] text-muted">{fmtRelative(cell.created_at)}</div>
-        </div>
-        <span
-          className={`text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 inline-flex items-center gap-1 ${
-            isPersonal ? "bg-slate-100 text-slate-600" : "text-white"
-          }`}
-          style={!isPersonal ? { background: colorOf(cell.team_name) } : undefined}
-        >
-          {isPersonal && <Icon name="file" className="w-3 h-3" />} {isPersonal ? "شخصی" : cell.team_name}
-        </span>
-        <button
-          onClick={() => setShowComments((s) => !s)}
-          className={`text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 inline-flex items-center gap-1 ${
-            commentCount > 0 ? "bg-primary/10 text-primary" : "bg-slate-100 text-muted"
-          }`}
-        >
-          <Icon name="message" className="w-3 h-3" /> {commentCount}
-        </button>
+        {simple ? (
+          <>
+            <div className="w-10 h-10 rounded-xl grid place-items-center text-primary shrink-0 border border-line bg-indigo-50">
+              <Icon name="terminal" className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-bold text-sm truncate">تمرین آزاد</div>
+              <div className="text-[11px] text-muted">{fmtRelative(cell.created_at)} · ذخیره‌ی خودکار روشن</div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div
+              className="w-10 h-10 rounded-xl grid place-items-center text-lg shrink-0 border border-line bg-white"
+              style={{ background: colorOf(cell.author_name) + "22" }}
+              title={cell.author_name || "ناشناس"}
+            >
+              {authorAvatar || initials(cell.author_name)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-bold text-sm truncate">
+                {cell.author_name || "ناشناس"}
+                {isOwn && (
+                  <span className="mr-1.5 text-[10px] font-bold px-1.5 py-0.5 bg-primary/10 text-primary rounded">
+                    شما
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-muted">{fmtRelative(cell.created_at)}</div>
+            </div>
+            <span
+              className={`text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 inline-flex items-center gap-1 ${
+                isPersonal ? "bg-slate-100 text-slate-600" : "text-white"
+              }`}
+              style={!isPersonal ? { background: colorOf(cell.team_name) } : undefined}
+            >
+              {isPersonal && <Icon name="file" className="w-3 h-3" />} {isPersonal ? "شخصی" : cell.team_name}
+            </span>
+            <button
+              onClick={() => setShowComments((s) => !s)}
+              className={`text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 inline-flex items-center gap-1 ${
+                commentCount > 0 ? "bg-primary/10 text-primary" : "bg-slate-100 text-muted"
+              }`}
+            >
+              <Icon name="message" className="w-3 h-3" /> {commentCount}
+            </button>
+          </>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-1.5 px-4 pt-2.5">
@@ -362,13 +412,15 @@ export default function CodeCell({
           <Icon name="save" className="w-3.5 h-3.5" />
           ذخیره
         </button>
-        <button
-          onClick={() => setShowComments((s) => !s)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-line bg-white"
-        >
-          <Icon name="message" className="w-3.5 h-3.5" />
-          نظر
-        </button>
+        {showCommentsUi && (
+          <button
+            onClick={() => setShowComments((s) => !s)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-line bg-white"
+          >
+            <Icon name="message" className="w-3.5 h-3.5" />
+            نظر
+          </button>
+        )}
         {canDelete && (
           <button
             onClick={del}
@@ -381,7 +433,7 @@ export default function CodeCell({
         )}
       </div>
 
-      {showComments && (
+      {showComments && showCommentsUi && (
         <div className="px-4 pb-4">
           <CommentsPanel cellId={cell.id} onCountChange={setCommentCount} />
         </div>

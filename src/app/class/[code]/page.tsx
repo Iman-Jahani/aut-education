@@ -18,10 +18,11 @@ import { CellSkeleton, ClassPageSkeleton } from "@/components/Skeleton";
 import Icon from "@/components/Icon";
 import { useActiveItem } from "@/hooks/useActiveItem";
 import { joinClassByCode, getClassAdminPinHash } from "@/lib/classJoin";
-import { rememberClass } from "@/lib/joinedClasses";
-import { hashPin } from "@/lib/utils";
+import { rememberClass, getLastLesson, setLastLesson } from "@/lib/joinedClasses";
+import { hashPin, fmtRelative } from "@/lib/utils";
 import { notebookToRows, cellsToNotebook, notebookFileName } from "@/lib/notebook";
-import type { Cell, ClassSession, Quiz, Competition } from "@/lib/types";
+import { listLessons, createLesson, updateLesson, deleteLesson } from "@/lib/lessons";
+import type { Cell, ClassSession, Lesson, Quiz, Competition } from "@/lib/types";
 
 // Cells are ordered by `position` (falls back to creation time for old cells),
 // which lets users insert a new cell anywhere between existing ones.
@@ -80,6 +81,18 @@ export default function ClassPage({ params }: { params: { code: string } }) {
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null);
   const [currentTeam, setCurrentTeam] = useState<CurrentTeam | null>(null);
 
+  // ---------- Lessons (جلسه‌ها) ----------
+  // `lessonsSupported === false` means supabase/LESSONS.sql has not been run yet;
+  // the page then falls back to the old single-workspace behaviour.
+  const [lessonsSupported, setLessonsSupported] = useState(false);
+  const [lessonsReady, setLessonsReady] = useState(false);
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
+  // Per-lesson cell count + last activity, so it is obvious where the student
+  // was active (and how much material each session holds).
+  const [lessonStats, setLessonStats] = useState<Record<string, { count: number; last: string | null }>>({});
+  const autoLessonRef = useRef(false);
+
   const [teacherMode, setTeacherMode] = useState(false);
   const [pinInput, setPinInput] = useState("");
 
@@ -130,11 +143,88 @@ export default function ClassPage({ params }: { params: { code: string } }) {
     if (isTeacher) setTeacherMode(true);
   }, [isTeacher]);
 
+  // ---------- Lessons ----------
+  const loadLessons = useCallback(async () => {
+    if (!session) return;
+    const list = await listLessons(session.id);
+    if (list === null) {
+      // `lessons` table missing (migration not run) → old single-workspace mode.
+      setLessonsSupported(false);
+    } else {
+      setLessonsSupported(true);
+      setLessons(list);
+    }
+    setLessonsReady(true);
+  }, [session]);
+
+  useEffect(() => {
+    void loadLessons();
+  }, [loadLessons]);
+
+  // Which lesson to show: the one from this device's last visit, else the first.
+  useEffect(() => {
+    if (!session || !lessonsSupported) return;
+    const visible = teacherMode ? lessons : lessons.filter((l) => l.is_published);
+    setActiveLessonId((cur) => {
+      if (cur && visible.some((l) => l.id === cur)) return cur;
+      const last = getLastLesson(session.id);
+      if (last && visible.some((l) => l.id === last)) return last;
+      return visible[0]?.id ?? null;
+    });
+  }, [session, lessons, lessonsSupported, teacherMode]);
+
+  // A teacher never faces a lesson-less page: the first visit creates «جلسه ۱».
+  useEffect(() => {
+    if (!session || !lessonsSupported || !lessonsReady || !teacherMode) return;
+    if (lessons.length > 0 || autoLessonRef.current) return;
+    autoLessonRef.current = true;
+    createLesson(session.id, "جلسه ۱")
+      .then((l) => {
+        setLessons([l]);
+        setActiveLessonId(l.id);
+        setLastLesson(session.id, l.id);
+      })
+      .catch(() => {
+        // RLS/migration problem — leave the page in its fallback state.
+        autoLessonRef.current = false;
+      });
+  }, [session, lessonsSupported, lessonsReady, teacherMode, lessons.length]);
+
+  // Per-lesson counters (recomputed as cells change) → «کدام جلسه فعال بودی».
+  useEffect(() => {
+    if (!session || !user || !lessonsSupported) return;
+    let q = supabase
+      .from("cells")
+      .select("lesson_id, created_at, updated_at")
+      .eq("class_id", session.id);
+    if (!teacherMode) {
+      if (currentTeam?.id) {
+        q = q.or(`team_id.eq.${currentTeam.id},and(team_id.is.null,author_id.eq.${user.id})`);
+      } else {
+        q = q.is("team_id", null).eq("author_id", user.id);
+      }
+    }
+    q.then(({ data }) => {
+      const map: Record<string, { count: number; last: string | null }> = {};
+      (data || []).forEach((r) => {
+        const key = (r.lesson_id as string | null) || "__none";
+        const m = map[key] || (map[key] = { count: 0, last: null });
+        m.count += 1;
+        const t = (r.updated_at as string | null) || (r.created_at as string | null);
+        if (t && (!m.last || t > m.last)) m.last = t;
+      });
+      setLessonStats(map);
+    });
+  }, [session, user, lessonsSupported, teacherMode, currentTeam?.id, cells]);
+
   // ---------- Cells ----------
   const loadCells = useCallback(async () => {
     if (!session || !user) return;
     if (!cellsLoadedOnce.current) setLoadingCells(true);
     let q = supabase.from("cells").select("*").eq("class_id", session.id).order("created_at", { ascending: true });
+    // Only the selected lesson's cells — this is what stops every session of the
+    // term piling up on one page.
+    if (lessonsSupported && activeLessonId) q = q.eq("lesson_id", activeLessonId);
     if (!teacherMode) {
       if (currentTeam?.id) {
         q = q.or(`team_id.eq.${currentTeam.id},and(team_id.is.null,author_id.eq.${user.id})`);
@@ -145,13 +235,18 @@ export default function ClassPage({ params }: { params: { code: string } }) {
     const { data, error } = await q;
     if (error) toast("خطا: " + error.message, "err");
     else setCells(sortCells(data || []));
+    // Remember this lesson on the device so the student returns to it next time.
+    if (lessonsSupported && activeLessonId) setLastLesson(session.id, activeLessonId);
     cellsLoadedOnce.current = true;
     setLoadingCells(false);
-  }, [session, user, currentTeam, teacherMode, toast]);
+  }, [session, user, currentTeam, teacherMode, toast, lessonsSupported, activeLessonId]);
 
   useEffect(() => {
-    if (session && user) loadCells();
-  }, [session, user, loadCells]);
+    // Wait for the lesson list first, so we never flash every lesson's cells
+    // before the active lesson is known (lessonsReady flips true even when the
+    // migration is missing, so the fallback path still loads immediately).
+    if (session && user && lessonsReady) loadCells();
+  }, [session, user, loadCells, lessonsReady]);
 
   // Avatars of everyone who wrote a visible cell (so cells show the author's
   // avatar instead of their initials).
@@ -189,6 +284,8 @@ export default function ClassPage({ params }: { params: { code: string } }) {
     return () => clearTimeout(t);
   }, [cells]);
 
+  // Realtime: reload when any cell of the class changes (loadCells scopes to
+  // the active lesson, so other lessons never pollute this view).
   useEffect(() => {
     if (!session) return;
     const channel = supabase
@@ -262,6 +359,12 @@ export default function ClassPage({ params }: { params: { code: string } }) {
       return;
     }
     const now = Date.now();
+    // Without a lesson there is nowhere to file the cell (and it would be
+    // invisible once lessons exist) — so ask the teacher to create one first.
+    if (lessonsSupported && !activeLessonId) {
+      toast("معلم هنوز هیچ جلسه‌ای برای این کلاس نساخته", "err");
+      return;
+    }
     let position: number;
     if (afterId === undefined) {
       const last = cells[cells.length - 1];
@@ -274,21 +377,19 @@ export default function ClassPage({ params }: { params: { code: string } }) {
       const next = cells[i + 1];
       position = next ? (eff(prev) + eff(next)) / 2 : Math.max(now, eff(prev) + 1);
     }
-    const { data, error } = await supabase
-      .from("cells")
-      .insert({
-        class_id: session.id,
-        team_id: currentTeam?.id || null,
-        team_name: currentTeam?.name || null,
-        author_id: user.id,
-        author_name: displayName,
-        code: "",
-        output: "",
-        tags: [],
-        position,
-      })
-      .select()
-      .single();
+    const row: Record<string, unknown> = {
+      class_id: session.id,
+      team_id: currentTeam?.id || null,
+      team_name: currentTeam?.name || null,
+      author_id: user.id,
+      author_name: displayName,
+      code: "",
+      output: "",
+      tags: [],
+      position,
+    };
+    if (lessonsSupported && activeLessonId) row.lesson_id = activeLessonId;
+    const { data, error } = await supabase.from("cells").insert(row).select().single();
     if (error || !data) {
       toast("خطا: " + (error?.message || "نامشخص"), "err");
       return;
@@ -312,6 +413,7 @@ export default function ClassPage({ params }: { params: { code: string } }) {
       const raw = await file.text();
       const nb = JSON.parse(raw);
       const start = cells.length ? eff(cells[cells.length - 1]) + 1000 : Date.now();
+      const lessonTag = lessonsSupported && activeLessonId ? { lesson_id: activeLessonId } : {};
       const rows = notebookToRows(nb, start).map((r) => ({
         class_id: session.id,
         team_id: currentTeam?.id || null,
@@ -322,6 +424,7 @@ export default function ClassPage({ params }: { params: { code: string } }) {
         output: "",
         tags: [],
         position: r.position,
+        ...lessonTag,
       }));
       if (!rows.length) {
         toast("هیچ سلولی توی فایل ipynb پیدا نشد", "err");
@@ -365,6 +468,63 @@ export default function ClassPage({ params }: { params: { code: string } }) {
     setCurrentTeam(team);
     if (team) storeTeam(session.id, team);
     else clearStoredTeam(session.id);
+  };
+
+  // ---------- Lesson actions ----------
+  const selectLesson = (id: string) => {
+    setActiveLessonId(id);
+    setFocusedCellId(null);
+    if (session) setLastLesson(session.id, id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const addLesson = async () => {
+    if (!session) return;
+    const name = window.prompt("نام جلسه‌ی جدید:", `جلسه ${lessons.length + 1}`);
+    if (name === null) return;
+    try {
+      const l = await createLesson(session.id, name.trim() || `جلسه ${lessons.length + 1}`);
+      autoLessonRef.current = true; // the auto-create effect must not fire too
+      setLessons((p) => [...p, l]);
+      selectLesson(l.id);
+      toast(`جلسه «${l.title}» ساخته شد`, "ok");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "ساخت جلسه ناموفق بود", "err");
+    }
+  };
+
+  const renameLesson = async (lesson: Lesson) => {
+    const name = window.prompt("نام جدید جلسه:", lesson.title);
+    if (name === null || !name.trim() || name.trim() === lesson.title) return;
+    const title = name.trim();
+    try {
+      await updateLesson(lesson.id, { title });
+      setLessons((p) => p.map((l) => (l.id === lesson.id ? { ...l, title } : l)));
+      toast("نام جلسه عوض شد", "ok");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "ویرایش ناموفق بود", "err");
+    }
+  };
+
+  const toggleLessonPublish = async (lesson: Lesson) => {
+    try {
+      await updateLesson(lesson.id, { is_published: !lesson.is_published });
+      setLessons((p) => p.map((l) => (l.id === lesson.id ? { ...l, is_published: !lesson.is_published } : l)));
+      toast(lesson.is_published ? "جلسه از دانشجوها پنهان شد" : "جلسه برای دانشجوها نمایش داده می‌شود", "info");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "تغییر وضعیت ناموفق بود", "err");
+    }
+  };
+
+  const removeLesson = async (lesson: Lesson) => {
+    if (!confirm(`جلسه «${lesson.title}» و همه‌ی سلول‌هایش حذف شود؟`)) return;
+    try {
+      await deleteLesson(lesson.id);
+      setLessons((p) => p.filter((l) => l.id !== lesson.id));
+      toast("جلسه حذف شد", "ok");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "حذف ناموفق بود", "err");
+    }
   };
 
   const unlockTeacherMode = async () => {
@@ -434,6 +594,11 @@ export default function ClassPage({ params }: { params: { code: string } }) {
 
   const compNeedsAttention = !!comp.item && !teacherMode && (!currentTeam || !comp.answered);
   const tabBase = "relative flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-bold whitespace-nowrap transition";
+  // Students never see unpublished lessons; teachers see everything.
+  const visibleLessons = teacherMode ? lessons : lessons.filter((l) => l.is_published);
+  const activeLesson = lessons.find((l) => l.id === activeLessonId) || null;
+  const activeStats = activeLesson ? lessonStats[activeLesson.id] : undefined;
+  const noLessonYet = lessonsSupported && !activeLesson;
 
   return (
     <div className="min-h-screen pb-28">
@@ -540,12 +705,70 @@ export default function ClassPage({ params }: { params: { code: string } }) {
             <Icon name="users" className="w-4 h-4" /> {currentTeam ? currentTeam.name : "تیم"}
           </button>
         </div>
+
+        {/* Lesson switcher — only the selected session is shown below */}
+        {lessonsSupported && (
+          <div className="max-w-4xl mx-auto px-4 pb-2.5 flex items-center gap-1.5 overflow-x-auto">
+            <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-muted">
+              <Icon name="layers" className="w-3.5 h-3.5" /> جلسه‌ها
+            </span>
+            {visibleLessons.map((l) => {
+              const st = lessonStats[l.id];
+              const active = l.id === activeLessonId;
+              return (
+                <button
+                  key={l.id}
+                  onClick={() => selectLesson(l.id)}
+                  title={st?.last ? `آخرین فعالیتت در این جلسه: ${fmtRelative(st.last)}` : "سلولی نداری"}
+                  className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-bold border transition ${
+                    active ? "bg-primary text-white border-primary shadow-soft" : "bg-white text-muted border-line hover:text-ink"
+                  }`}
+                >
+                  <span className="max-w-[10rem] truncate">{l.title}</span>
+                  {!l.is_published && <Icon name="eyeOff" className="w-3 h-3" />}
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${active ? "bg-white/25" : "bg-slate-100"}`}>
+                    {st?.count ?? 0}
+                  </span>
+                </button>
+              );
+            })}
+            {teacherMode && (
+              <button
+                onClick={addLesson}
+                className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[12px] font-bold border border-dashed border-primary/40 text-primary bg-white hover:bg-primary/5"
+              >
+                <Icon name="plus" className="w-3.5 h-3.5" /> جلسه جدید
+              </button>
+            )}
+            <button onClick={() => void loadLessons()} title="تازه‌سازی لیست جلسه‌ها" className="shrink-0 w-7 h-7 grid place-items-center rounded-full border border-line bg-white text-muted hover:text-primary">
+              <Icon name="refresh" className="w-3.5 h-3.5" />
+            </button>
+            <div className="flex-1" />
+            {teacherMode && activeLesson && (
+              <div className="shrink-0 flex items-center gap-1">
+                <button onClick={() => renameLesson(activeLesson)} title="تغییر نام جلسه" className="w-7 h-7 grid place-items-center rounded-lg border border-line bg-white text-muted hover:text-primary">
+                  <Icon name="edit" className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => toggleLessonPublish(activeLesson)}
+                  title={activeLesson.is_published ? "پنهان از دانشجو" : "نمایش به دانشجو"}
+                  className="w-7 h-7 grid place-items-center rounded-lg border border-line bg-white text-muted hover:text-primary"
+                >
+                  <Icon name={activeLesson.is_published ? "eye" : "eyeOff"} className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={() => removeLesson(activeLesson)} title="حذف جلسه و سلول‌هایش" className="w-7 h-7 grid place-items-center rounded-lg border border-red-200 bg-white text-danger">
+                  <Icon name="trash" className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </header>
 
       {teacherMode && (
         <div className="bg-gradient-to-l from-amber-400 to-orange-400 text-white text-center text-xs font-bold py-1.5 flex items-center justify-center gap-2">
           <Icon name="cap" className="w-4 h-4" />
-          حالت معلم فعاله — همه‌ی سلول‌های کلاس رو می‌بینی و می‌تونی حذفشون کنی
+          حالت معلم فعاله — فقط سلول‌های {activeLesson ? `جلسه‌ی «${activeLesson.title}»` : "کلاس"} رو می‌بینی و می‌تونی حذفشون کنی
         </div>
       )}
 
@@ -553,8 +776,26 @@ export default function ClassPage({ params }: { params: { code: string } }) {
       <main className="max-w-4xl mx-auto px-4 py-6">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
           <div>
-            <h2 className="font-extrabold text-lg">{teacherMode ? "همه‌ی سلول‌ها" : currentTeam ? `فضای تیم ${currentTeam.name}` : "سلول‌های شخصی من"}</h2>
-            <p className="text-xs text-muted mt-0.5">{cells.length} سلول</p>
+            <h2 className="font-extrabold text-lg flex items-center gap-2">
+              {lessonsSupported && <Icon name="layers" className="w-5 h-5 text-primary" />}
+              {activeLesson
+                ? activeLesson.title
+                : teacherMode
+                ? "همه‌ی سلول‌ها"
+                : currentTeam
+                ? `فضای تیم ${currentTeam.name}`
+                : "سلول‌های شخصی من"}
+            </h2>
+            <p className="text-xs text-muted mt-0.5">
+              {cells.length} سلول
+              {teacherMode
+                ? activeLesson
+                  ? ` · جلسه ${activeLesson.title} از ${visibleLessons.length} جلسه`
+                  : " · همه‌ی سلول‌های کلاس"
+                : currentTeam
+                ? ` · سلول‌های تیم ${currentTeam.name}`
+                : " · سلول‌های شخصی‌ات"}
+            </p>
           </div>
 
           {teacherMode && (
@@ -573,7 +814,7 @@ export default function ClassPage({ params }: { params: { code: string } }) {
                 onClick={() => nbFileRef.current?.click()}
                 disabled={importingNb}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-white border border-line hover:shadow-soft transition disabled:opacity-50"
-                title="آپلود فایل ipynb داخل کلاس"
+                title={activeLesson ? `آپلود فایل ipynb داخل جلسه‌ی «${activeLesson.title}»` : "آپلود فایل ipynb داخل کلاس"}
               >
                 <Icon name="upload" className="w-4 h-4" />
                 {importingNb ? "در حال خواندن…" : "آپلود ipynb"}
@@ -582,7 +823,7 @@ export default function ClassPage({ params }: { params: { code: string } }) {
                 onClick={exportNotebook}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-white shadow-soft transition"
                 style={{ background: "var(--grad)" }}
-                title="خروجی ipynb از کل سلول‌های کلاس"
+                title={activeLesson ? `خروجی ipynb از سلول‌های جلسه‌ی «${activeLesson.title}»` : "خروجی ipynb از کل سلول‌های کلاس"}
               >
                 <Icon name="download" className="w-4 h-4" />
                 خروجی ipynb
@@ -600,14 +841,25 @@ export default function ClassPage({ params }: { params: { code: string } }) {
           ) : cells.length === 0 ? (
             <div className="card text-center py-16 px-6 anim-pop">
               <div className="flex justify-center text-primary mb-3">
-                <Icon name="sparkles" className="w-10 h-10" />
+                <Icon name={noLessonYet ? "layers" : "sparkles"} className="w-10 h-10" />
               </div>
-              <h3 className="font-extrabold mb-1">آماده‌ای شروع کنی؟</h3>
-              <p className="text-sm text-muted mb-5">یه سلول بساز و اولین کد پایتونت رو بنویس، یا به یه تیم بپیوند.</p>
+              <h3 className="font-extrabold mb-1">{noLessonYet ? "هنوز جلسه‌ای ساخته نشده" : "آماده‌ای شروع کنی؟"}</h3>
+              <p className="text-sm text-muted mb-5">
+                {noLessonYet
+                  ? "معلم هنوز هیچ جلسه‌ای برای این کلاس نساخته. تا اون موقع می‌تونی از «دفترچه آزاد» برای تمرین استفاده کنی."
+                  : "توی این جلسه یه سلول بساز و اولین کد پایتونت رو بنویس، یا به یه تیم بپیوند."}
+              </p>
               <div className="flex gap-2 justify-center flex-wrap">
-                <button onClick={() => addCell()} className="btn-primary inline-flex items-center gap-1.5">
-                  <Icon name="plus" className="w-4 h-4" /> سلول جدید
-                </button>
+                {!noLessonYet && (
+                  <button onClick={() => addCell()} className="btn-primary inline-flex items-center gap-1.5">
+                    <Icon name="plus" className="w-4 h-4" /> سلول جدید
+                  </button>
+                )}
+                {noLessonYet && (
+                  <Link href="/playground" className="btn-primary inline-flex items-center gap-1.5">
+                    <Icon name="terminal" className="w-4 h-4" /> تمرین آزاد
+                  </Link>
+                )}
                 <button onClick={() => setTeamPickerOpen(true)} className="btn-ghost inline-flex items-center gap-1.5">
                   <Icon name="users" className="w-4 h-4" /> پیوستن به تیم
                 </button>
